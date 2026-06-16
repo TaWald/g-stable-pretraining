@@ -34,6 +34,11 @@ def main():
     num_gpus = torch.cuda.device_count() or 1
     batch_size = 64
     max_epochs = int(os.environ.get("MAX_EPOCHS", 600))
+    # Where checkpoints are written. Defaults next to this script; override with
+    # CHECKPOINT_DIR (e.g. point it at scratch to keep them out of $HOME).
+    ckpt_dir = os.environ.get(
+        "CHECKPOINT_DIR", str(Path(__file__).parent / "checkpoints")
+    )
 
     def ijepa_forward(self, batch, stage):
         output = IJEPA.forward(self, batch["image"], embedding_source="student")
@@ -42,7 +47,12 @@ def main():
             embedding = embedding.detach()
 
         self.log(
-            f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
+            f"{stage}/loss",
+            output.loss,
+            on_step=True,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=batch["image"].shape[0],
         )
 
         return {
@@ -150,6 +160,7 @@ def main():
                 queue_length=10000,
                 metrics={"top1": torchmetrics.classification.MulticlassAccuracy(10)},
                 input_dim=module.embed_dim,
+                num_classes=10,
                 k=20,
             ),
             spt.callbacks.RankMe(
@@ -159,7 +170,7 @@ def main():
                 target_shape=module.embed_dim,
             ),
             pl.pytorch.callbacks.ModelCheckpoint(
-                dirpath=str(Path(__file__).parent / "checkpoints" / "ijepa-vitb-mine"),
+                dirpath=str(Path(ckpt_dir) / "ijepa-vitb-mine"),
                 filename="ijepa-vitb-{epoch:03d}",
                 save_top_k=-1,
                 every_n_epochs=300,
