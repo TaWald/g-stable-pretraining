@@ -152,6 +152,7 @@ def main():
                     "top5": torchmetrics.classification.MulticlassAccuracy(10, top_k=5),
                 },
                 optimizer={"type": "AdamW", "lr": 0.03, "weight_decay": 0.0},
+                log_on_step=False,
             ),
             spt.callbacks.OnlineKNN(
                 name="knn_probe",
