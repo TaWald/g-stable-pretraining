@@ -170,7 +170,7 @@ def main():
             pl.pytorch.callbacks.LearningRateMonitor(logging_interval="step"),
         ],
         logger=pl.pytorch.loggers.WandbLogger(
-            entity=os.environ.get("WANDB_ENTITY"),
+            entity=os.environ.get("WANDB_ENTITY", "tawald"),
             project=os.environ.get("WANDB_PROJECT", "ijepa-mine"),
             name="ijepa-vith-inet10",
             log_model=False,
