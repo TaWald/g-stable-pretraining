@@ -29,7 +29,7 @@ from stable_pretraining.methods.ijepa import IJEPA
 
 def main():
     sys.path.append(str(Path(__file__).parent.parent))
-    from utils import get_data_dir, maybe_build_seg_eval
+    from utils import get_data_dir, ijepa_teacher_features, maybe_build_seg_eval
 
     num_gpus = torch.cuda.device_count() or 1
     batch_size = 64
@@ -132,12 +132,12 @@ def main():
         "interval": "step",
     }
 
-    # Inline ADE20k kNN-segmentation monitor (frozen backbone). I-JEPA's encoder
-    # has no CLS token; the eval-mode forward returns the full (B, N, D) grid.
+    # Inline ADE20k kNN-segmentation monitor (frozen backbone). Uses the I-JEPA
+    # *target* (teacher/EMA) encoder — the representation evaluated downstream.
     # ViT-B/16 @224 -> 14x14 patch grid.
     seg_eval = maybe_build_seg_eval(
         grid_size=(14, 14),
-        feature_fn=lambda m, x: IJEPA.forward(m, x, embedding_source="student").embedding,
+        feature_fn=ijepa_teacher_features,
         name="ijepa_vitb_ade20k_seg",
     )
 

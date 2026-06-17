@@ -6,6 +6,32 @@ import sys
 from pathlib import Path
 
 import lightning.pytorch as pl
+import torch
+
+
+def ijepa_teacher_features(pl_module, images):
+    """Full-grid patch tokens from the I-JEPA *target* (teacher/EMA) encoder.
+
+    Mirrors the ``teacher_full`` path inside ``IJEPA.forward`` — all patches, no
+    masking, no CLS — i.e. the representation actually distilled during training
+    and the one the post-hoc eval restores from the ``target_encoder`` checkpoint
+    (see ``benchmarks/_backbones.py``).
+
+    We deliberately do *not* route through ``IJEPA.forward(..., embedding_source=
+    "teacher")``: in eval mode that method ignores ``embedding_source`` and always
+    encodes through the student (context) encoder, so it can never return teacher
+    features. Returns ``(B, N, D)`` with the teacher's final norm applied.
+    """
+    teacher = pl_module.encoder.teacher
+    b = images.shape[0]
+    grid_h, grid_w = teacher._get_grid_size(images)
+    patches = teacher.patch_embed(images)
+    all_idx = (
+        torch.arange(grid_h * grid_w, device=images.device)
+        .unsqueeze(0)
+        .expand(b, -1)
+    )
+    return pl_module._encode(patches, all_idx, grid_h, grid_w, teacher)
 
 
 def maybe_build_seg_eval(grid_size, feature_fn, *, name, data_cache=None):
