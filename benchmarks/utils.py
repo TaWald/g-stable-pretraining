@@ -2,9 +2,57 @@
 
 import math
 import os
+import sys
 from pathlib import Path
 
 import lightning.pytorch as pl
+
+
+def maybe_build_seg_eval(grid_size, feature_fn, *, name, data_cache=None):
+    """Build an inline ADE20k kNN-segmentation monitor for an SSL pretraining run.
+
+    Wraps :class:`stable_pretraining.PeriodicSegmentationEval` via the ADE20k
+    ``build_periodic_ade20k_seg_callback`` helper: every ``SEG_EVAL_EVERY``
+    epochs it snapshots the frozen backbone, extracts patch features over a
+    subsampled ADE20k support set, and scores a weighted kNN segmentation probe
+    (per-pixel mIoU / pixel-acc) on the val split. It owns its own dataloaders
+    and never touches the SSL train/val loop.
+
+    Gated by env so it is opt-out without code edits (and so the ADE20k dataset
+    is only loaded when wanted):
+
+    * ``SEG_EVAL`` (default ``"1"``): set ``"0"`` to disable entirely (returns None).
+    * ``SEG_EVAL_EVERY`` (default 25): epoch cadence.
+    * ``SEG_EVAL_SUPPORT`` (default 2048): support-image budget per trigger.
+    * ``SEG_EVAL_LINEAR`` (default ``"0"``): also train a linear seg head (costlier).
+
+    Args:
+        grid_size: ``(H_g, W_g)`` patch grid the backbone produces at 224 (e.g.
+            ``(14, 14)`` for /16, ``(16, 16)`` for ViT-H/14).
+        feature_fn: ``(pl_module, images) -> (B, N, D)`` patch tokens (CLS/prefix
+            dropped) for *this* backbone.
+        name: Log-key prefix (``eval/{name}_knn_miou`` etc.).
+        data_cache: Optional HF datasets ``cache_dir`` for ADE20k.
+
+    Returns:
+        The callback, or ``None`` when ``SEG_EVAL=0``.
+    """
+    if os.environ.get("SEG_EVAL", "1") == "0":
+        return None
+    # ``build_periodic_ade20k_seg_callback`` lives in benchmarks/ade20k/_common.py.
+    sys.path.append(str(Path(__file__).parent / "ade20k"))
+    from _common import build_periodic_ade20k_seg_callback
+
+    return build_periodic_ade20k_seg_callback(
+        grid_size=grid_size,
+        feature_fn=feature_fn,
+        eval_every_n_epochs=int(os.environ.get("SEG_EVAL_EVERY", 25)),
+        support_images=int(os.environ.get("SEG_EVAL_SUPPORT", 2048)),
+        run_knn=True,
+        run_linear=os.environ.get("SEG_EVAL_LINEAR", "0") == "1",
+        data_cache=data_cache,
+        name=name,
+    )
 
 
 def get_data_dir(dataset_name: str = None) -> Path:

@@ -208,8 +208,12 @@ class PeriodicSegmentationEval(Callback):
     @torch.no_grad()
     def _run_eval(self, pl_module: LightningModule, run_linear: bool) -> None:
         device = pl_module.device
-        was_training = pl_module.backbone.training
-        pl_module.backbone.eval()
+        # Freeze for eval. Methods that build their own encoder (e.g. MAE/I-JEPA)
+        # expose ``.encoder`` rather than ``.backbone``; fall back to the module
+        # itself so the toggle never silently fails (and is swallowed upstream).
+        eval_mod = getattr(pl_module, "backbone", pl_module)
+        was_training = eval_mod.training
+        eval_mod.eval()
         try:
             bank_feats, bank_labels = self._extract_support(pl_module, device)
             if bank_feats.numel() == 0:
@@ -225,7 +229,7 @@ class PeriodicSegmentationEval(Callback):
             if logs:
                 pl_module.log_dict(logs, rank_zero_only=True, sync_dist=False)
         finally:
-            pl_module.backbone.train(was_training)
+            eval_mod.train(was_training)
 
     def _extract_support(self, pl_module, device):
         feats_chunks, label_chunks, n_imgs = [], [], 0

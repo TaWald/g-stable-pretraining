@@ -41,7 +41,7 @@ NUM_CLASSES = 1000
 
 def main():
     sys.path.append(str(Path(__file__).parent.parent))
-    from utils import get_data_dir, CosineWDSchedule
+    from utils import get_data_dir, maybe_build_seg_eval, CosineWDSchedule
 
     num_gpus = torch.cuda.device_count() or 1
     batch_size = int(os.environ.get("BATCH_SIZE", 64))
@@ -149,6 +149,15 @@ def main():
         "interval": "step",
     }
 
+    # Inline ADE20k kNN-segmentation monitor (frozen backbone). I-JEPA's encoder
+    # has no CLS token; the eval-mode forward returns the full (B, N, D) grid
+    # (all patches as context). ViT-H/14 @224 -> 16x16 patch grid.
+    seg_eval = maybe_build_seg_eval(
+        grid_size=(16, 16),
+        feature_fn=lambda m, x: IJEPA.forward(m, x, embedding_source="student").embedding,
+        name="ijepa_vith_ade20k_seg",
+    )
+
     trainer = pl.Trainer(
         max_epochs=max_epochs,
         accumulate_grad_batches=accum,
@@ -199,6 +208,7 @@ def main():
                 queue_length=1000,
                 target_shape=module.embed_dim,
             ),
+            *([seg_eval] if seg_eval is not None else []),
             pl.pytorch.callbacks.ModelCheckpoint(
                 dirpath=str(Path(ckpt_dir) / "ijepa-vith-inet1k"),
                 filename="ijepa-vith-{epoch:03d}",

@@ -33,7 +33,7 @@ NUM_CLASSES = 1000
 
 def main():
     sys.path.append(str(Path(__file__).parent.parent))
-    from utils import get_data_dir
+    from utils import get_data_dir, maybe_build_seg_eval
 
     num_gpus = torch.cuda.device_count() or 1
     batch_size = int(os.environ.get("BATCH_SIZE", 128))
@@ -141,6 +141,14 @@ def main():
         "interval": "step",
     }
 
+    # Inline ADE20k kNN-segmentation monitor (frozen backbone; CLS dropped).
+    # ViT-L/16 @224 -> 14x14 patch grid. Env-gated; see maybe_build_seg_eval.
+    seg_eval = maybe_build_seg_eval(
+        grid_size=(14, 14),
+        feature_fn=lambda m, x: m.encoder.forward_features(x)[:, 1:],
+        name="mae_vitl_ade20k_seg",
+    )
+
     trainer = pl.Trainer(
         max_epochs=max_epochs,
         accumulate_grad_batches=accum,
@@ -180,6 +188,7 @@ def main():
                 queue_length=1000,
                 target_shape=embed_dim,
             ),
+            *([seg_eval] if seg_eval is not None else []),
             pl.pytorch.callbacks.ModelCheckpoint(
                 dirpath=str(Path(ckpt_dir) / "mae-vitl-inet1k"),
                 filename="mae-vitl-{epoch:03d}",

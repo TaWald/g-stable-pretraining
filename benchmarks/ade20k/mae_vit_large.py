@@ -23,13 +23,20 @@ from _common import (  # noqa: E402
     build_knn_segmentation_callback,
     build_linear_segmentation_callback,
     build_module,
+    load_mae_vit_base,
     load_mae_vit_large,
 )
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", required=True, help="MAE ViT-L pretrain .pth")
+    p.add_argument("--checkpoint", required=True, help="MAE pretrain .pth")
+    p.add_argument(
+        "--arch",
+        choices=["base", "large"],
+        default="large",
+        help="MAE backbone size (ViT-B/16 or ViT-L/16)",
+    )
     p.add_argument(
         "--probe",
         choices=["knn", "linear"],
@@ -54,7 +61,8 @@ def main():
     p.add_argument("--devices", type=int, default=1)
     args = p.parse_args()
 
-    backbone, grid_size, embed_dim = load_mae_vit_large(args.checkpoint)
+    loader = load_mae_vit_base if args.arch == "base" else load_mae_vit_large
+    backbone, grid_size, embed_dim = loader(args.checkpoint)
 
     data = build_ade20k_datamodule(
         image_size=224,
@@ -71,7 +79,7 @@ def main():
             queue_length=args.queue_length,
             k=args.k,
             chunk_size=args.chunk_size,
-            name="mae_vitl_ade20k_knn_seg",
+            name=f"mae_vit{args.arch[0]}_ade20k_knn_seg",
         )
         max_epochs = 1  # one pass just fills the support queue
     else:
@@ -82,7 +90,7 @@ def main():
             use_batchnorm=not args.no_batchnorm,
             lr=args.lr,
             epochs=args.epochs,
-            name="mae_vitl_ade20k_linear_seg",
+            name=f"mae_vit{args.arch[0]}_ade20k_linear_seg",
         )
         max_epochs = args.epochs
 
