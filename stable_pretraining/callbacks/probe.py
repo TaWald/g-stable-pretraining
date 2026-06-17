@@ -87,12 +87,16 @@ class OnlineProbe(TrainableCallback):
         gradient_clip_algorithm: str = "norm",
         metrics: Optional[Union[dict, tuple, list, torchmetrics.Metric]] = None,
         verbose: bool = None,
+        log_on_step: bool = True,
     ) -> None:
         from .utils import resolve_verbose
 
         # Initialize base class
         self.input = input
         self.target = target
+        # When False, only the epoch-aggregated metrics/loss are logged (no
+        # noisy per-batch ``*_step`` series). Epoch logging is always on.
+        self.log_on_step = log_on_step
         if loss is None:
             logging.warning(f"Not loss given to {name}, will use output of `probe`")
         self.loss = loss
@@ -189,10 +193,20 @@ class OnlineProbe(TrainableCallback):
 
             # Raw scalars (loss): sync across GPUs
             if scalar_logs:
-                self.log_dict(scalar_logs, on_step=True, on_epoch=True, sync_dist=True)
+                self.log_dict(
+                    scalar_logs,
+                    on_step=callback.log_on_step,
+                    on_epoch=True,
+                    sync_dist=True,
+                )
             # torchmetrics: handle their own distributed sync, do NOT use sync_dist
             if metric_logs:
-                self.log_dict(metric_logs, on_step=True, on_epoch=True, sync_dist=False)
+                self.log_dict(
+                    metric_logs,
+                    on_step=callback.log_on_step,
+                    on_epoch=True,
+                    sync_dist=False,
+                )
             return outputs
 
         # Bind the new method to the instance
