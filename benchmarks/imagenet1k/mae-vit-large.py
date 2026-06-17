@@ -10,7 +10,8 @@ ImageNet-1k is gated on the Hub; accept the license once and authenticate
 ``HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1`` and ``WANDB_MODE=offline`` (+ WANDB_ENTITY).
 
 Env knobs: MAX_EPOCHS (default 800), BATCH_SIZE (per-GPU, default 128),
-CHECKPOINT_DIR, WANDB_DIR, WANDB_ENTITY, WANDB_PROJECT.
+ACCUM (grad accumulation, default 4 -> effective batch 128*8*4=4096 on 8 GPUs,
+matching the gmae reference run), CHECKPOINT_DIR, WANDB_DIR, WANDB_ENTITY, WANDB_PROJECT.
 """
 
 import os
@@ -36,11 +37,15 @@ def main():
 
     num_gpus = torch.cuda.device_count() or 1
     batch_size = int(os.environ.get("BATCH_SIZE", 128))
+    accum = int(os.environ.get("ACCUM", 4))
     max_epochs = int(os.environ.get("MAX_EPOCHS", 800))  # gmae reference
     warmup_epochs = 40
-    # MAE linear scaling rule: lr = blr * effective_batch / 256.
+    # MAE linear scaling rule: lr = blr * effective_batch / 256, where
+    # effective_batch = per_gpu_batch * num_gpus * accum.
+    # gmae reference: 128 * 8 * 4 = 4096  ->  lr = 1.5e-4 * 4096/256 = 2.4e-3.
     base_lr = 1.5e-4
-    lr = base_lr * (batch_size * num_gpus) / 256
+    effective_batch = batch_size * num_gpus * accum
+    lr = base_lr * effective_batch / 256
     ckpt_dir = os.environ.get(
         "CHECKPOINT_DIR", str(Path(__file__).parent / "checkpoints")
     )
@@ -130,13 +135,15 @@ def main():
             "peak_step": warmup_epochs / max_epochs,
             "start_factor": 0.0,  # MAE warms up from 0
             "end_lr": 0.0,  # MAE min_lr = 0
-            "total_steps": (len(data.train) // num_gpus) * max_epochs,
+            # global_step counts optimizer steps (post-accumulation); divide by accum.
+            "total_steps": (len(data.train) // num_gpus // accum) * max_epochs,
         },
         "interval": "step",
     }
 
     trainer = pl.Trainer(
         max_epochs=max_epochs,
+        accumulate_grad_batches=accum,
         num_sanity_val_steps=0,
         callbacks=[
             spt.callbacks.OnlineProbe(

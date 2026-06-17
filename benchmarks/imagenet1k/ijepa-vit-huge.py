@@ -16,6 +16,9 @@ ImageNet-1k is gated on the Hub; accept the license once and authenticate
 ``HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1`` and ``WANDB_MODE=offline`` (+ WANDB_ENTITY).
 
 Env knobs: MAX_EPOCHS (default 300), BATCH_SIZE (per-GPU, default 64),
+ACCUM (grad accumulation, default 4 -> effective batch 64*8*4=2048 on 8 GPUs,
+the gijepa reference). If ViT-H/14 OOMs at 64, drop BATCH_SIZE and raise ACCUM to
+keep the same effective batch (e.g. BATCH_SIZE=32 ACCUM=8); the LR is unchanged.
 CHECKPOINT_DIR, WANDB_DIR, WANDB_ENTITY, WANDB_PROJECT.
 """
 
@@ -42,11 +45,14 @@ def main():
 
     num_gpus = torch.cuda.device_count() or 1
     batch_size = int(os.environ.get("BATCH_SIZE", 64))
+    accum = int(os.environ.get("ACCUM", 4))
     max_epochs = int(os.environ.get("MAX_EPOCHS", 300))  # gijepa reference
     warmup_epochs = 40
     # gijepa reference lr 2.5e-4 at effective batch 2048; scale linearly.
+    # effective_batch = per_gpu_batch * num_gpus * accum (reference 2048).
     ref_lr = 2.5e-4
-    lr = ref_lr * (batch_size * num_gpus) / 2048
+    effective_batch = batch_size * num_gpus * accum
+    lr = ref_lr * effective_batch / 2048
     ckpt_dir = os.environ.get(
         "CHECKPOINT_DIR", str(Path(__file__).parent / "checkpoints")
     )
@@ -123,7 +129,8 @@ def main():
         pretrained=False,
     )
 
-    total_steps = (len(data.train) // num_gpus) * max_epochs
+    # global_step counts optimizer steps (post-accumulation); divide by accum.
+    total_steps = (len(data.train) // num_gpus // accum) * max_epochs
     module.forward = types.MethodType(ijepa_forward, module)
     module.optim = {
         "optimizer": {
@@ -144,11 +151,14 @@ def main():
 
     trainer = pl.Trainer(
         max_epochs=max_epochs,
+        accumulate_grad_batches=accum,
         num_sanity_val_steps=0,
         callbacks=[
             spt.callbacks.TeacherStudentCallback(
                 update_frequency=1,
-                update_after_backward=True,
+                # False => EMA updates once per OPTIMIZER step (correct under
+                # gradient accumulation), matching gijepa's per-iteration EMA.
+                update_after_backward=False,
             ),
             CosineWDSchedule(
                 start_weight_decay=0.04,
