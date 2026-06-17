@@ -1,0 +1,63 @@
+#!/bin/bash
+#BSUB -q gpu-pro
+#BSUB -gpu "num=8:j_exclusive=yes:mode=exclusive_process:gmem=34G"
+#BSUB -n 20
+# Single-node, 8-GPU ImageNet-1k pretraining for g-stable-pretraining.
+#
+# IMPORTANT: unlike the gmae reference (which uses `torchrun --nproc_per_node=8`),
+# stable-pretraining scripts set `devices=torch.cuda.device_count()` with a DDP
+# strategy, so PyTorch-Lightning *self-launches* one process per visible GPU.
+# You therefore run `python <script>.py` ONCE — no torchrun, no mpirun. LSF's
+# `-gpu num=8` sets CUDA_VISIBLE_DEVICES to the 8 allocated GPUs; Lightning sees
+# all 8 and spawns the workers. `span[hosts=1]` keeps them on one node.
+#
+# Launch (pick the script via SPT_SCRIPT):
+#   SPT_SCRIPT=benchmarks/imagenet1k/mae-vit-large.py  bsub < benchmarks/imagenet1k/pretrain-8gpu.lsf
+#   SPT_SCRIPT=benchmarks/imagenet1k/ijepa-vit-huge.py bsub < benchmarks/imagenet1k/pretrain-8gpu.lsf
+#   # smoke test: prepend MAX_EPOCHS=2 (and a small BATCH_SIZE) to the env below.
+
+set -uo pipefail
+
+# --- repo + environment ------------------------------------------------------
+REPO=/dkfz/cluster/gpu/data/OE0441/t006d/Code/g-stable-pretraining
+cd "$REPO"
+source /home/t006d/stablepretrainingrc     # your env setup (puts the right python on PATH)
+
+SPT_SCRIPT="${SPT_SCRIPT:-benchmarks/imagenet1k/mae-vit-large.py}"
+
+# --- offline + identity (compute nodes have no internet) ---------------------
+export WANDB_MODE=offline
+export WANDB_ENTITY=tawald
+export WANDB_PROJECT=imagenet1k-mae-ijepa
+export WANDB_DIR=/dkfz/cluster/gpu/checkpoints/OE0441/t006d      # wandb appends /wandb
+export WANDB_CONSOLE=off                                          # don't upload console spew
+export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# Dataset Arrow cache (the job reads ImageNet-1k from $STABLE_PRETRAINING_DATA_DIR/imagenet1k).
+# Must be IDENTICAL to the value used when running prepare_imagenet1k.py.
+export STABLE_PRETRAINING_DATA_DIR=/dkfz/cluster/gpu/data/OE0441/t006d/Natural_Datasets
+# HF_HOME is a SEPARATE hub cache (models/tokenizers/snapshots) — any scratch dir
+# with space; does NOT need to equal STABLE_PRETRAINING_DATA_DIR.
+export HF_HOME=/dkfz/cluster/gpu/data/OE0441/t006d/Natural_Datasets/.hf
+export CHECKPOINT_DIR=/dkfz/cluster/gpu/checkpoints/OE0441/t006d/checkpoints
+# Keep everything off the (tiny) home quota:
+#  - SPT_CACHE_DIR: spt run_dir/metrics (defaults to ~/.cache/stable-pretraining)
+#  - TMPDIR: temp/extraction scratch (defaults to /tmp, which may be small/home-backed)
+export SPT_CACHE_DIR=/dkfz/cluster/gpu/checkpoints/OE0441/t006d/spt-cache
+export TMPDIR=/dkfz/cluster/gpu/checkpoints/OE0441/t006d/tmp
+mkdir -p "$SPT_CACHE_DIR" "$TMPDIR" "$HF_HOME"
+
+# Per-GPU batch size: tune to gmem. The script's LR auto-scales from the
+# reference effective batch (256 for MAE, 2048 for IJEPA) using batch*num_gpus.
+# export BATCH_SIZE=128
+# export MAX_EPOCHS=800   # overrides the per-method default (MAE 800 / IJEPA 300)
+
+# --- single-node NCCL: uncomment a line if the FIRST collective hangs --------
+export NCCL_DEBUG=WARN
+# export NCCL_SOCKET_IFNAME=<node NIC, e.g. ib0>   # see: ip -br link
+# export NCCL_P2P_DISABLE=1                          # diagnostic: SHM instead of NVLink/PCIe
+# export NCCL_IB_DISABLE=1                           # diagnostic: rule out IB fabric
+
+echo "HOST=$(hostname)"; nvidia-smi -L
+
+# --- launch (single python process; Lightning DDP spawns the other 7) --------
+python "$SPT_SCRIPT"
