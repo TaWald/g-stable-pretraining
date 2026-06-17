@@ -7,9 +7,12 @@ from .checkpoint_trackio import TrackioCheckpoint
 from .checkpoint_swanlab import SwanLabCheckpoint
 from .image_retrieval import ImageRetrieval
 from .knn import OnlineKNN
+from .knn_segmentation import OnlineKNNSegmentation
 from .latent_viz import LatentViz
 from .lidar import LiDAR
+from .periodic_segmentation import PeriodicSegmentationEval
 from .probe import OnlineProbe
+from .probe_segmentation import OnlineProbeSegmentation
 from .queues import OrderedQueue, UnsortedQueue
 from .image_decoder import OnlineImageDecoder
 from .hardware_monitor import HardwareMonitor
@@ -30,11 +33,14 @@ from .hf_models import HuggingFaceCheckpointCallback
 
 __all__ = [
     OnlineProbe,
+    OnlineProbeSegmentation,
+    PeriodicSegmentationEval,
     OnlineImageDecoder,
     HardwareMonitor,
     SklearnCheckpoint,
     WandbCheckpoint,
     OnlineKNN,
+    OnlineKNNSegmentation,
     LatentViz,
     TrainerInfo,
     SLURMInfo,

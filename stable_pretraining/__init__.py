@@ -160,7 +160,19 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "LoggingCallback": ("stable_pretraining.callbacks", "LoggingCallback"),
     "ModuleSummary": ("stable_pretraining.callbacks", "ModuleSummary"),
     "OnlineKNN": ("stable_pretraining.callbacks", "OnlineKNN"),
+    "OnlineKNNSegmentation": (
+        "stable_pretraining.callbacks",
+        "OnlineKNNSegmentation",
+    ),
     "OnlineProbe": ("stable_pretraining.callbacks", "OnlineProbe"),
+    "OnlineProbeSegmentation": (
+        "stable_pretraining.callbacks",
+        "OnlineProbeSegmentation",
+    ),
+    "PeriodicSegmentationEval": (
+        "stable_pretraining.callbacks",
+        "PeriodicSegmentationEval",
+    ),
     "OnlineWriter": ("stable_pretraining.callbacks", "OnlineWriter"),
     "RankMe": ("stable_pretraining.callbacks", "RankMe"),
     "TeacherStudentCallback": (
@@ -326,8 +338,11 @@ __all__ = [
     "get_config",
     # Callbacks
     "OnlineProbe",
+    "OnlineProbeSegmentation",
+    "PeriodicSegmentationEval",
     "SklearnCheckpoint",
     "OnlineKNN",
+    "OnlineKNNSegmentation",
     "TrainerInfo",
     "LoggingCallback",
     "ModuleSummary",

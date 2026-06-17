@@ -13,6 +13,65 @@ from .queue import find_or_create_queue_callback
 from .utils import format_metrics_as_dict, get_data_from_batch_or_outputs, log_header
 
 
+@torch.no_grad()
+def weighted_knn_predict(
+    features: Tensor,
+    bank_features: Tensor,
+    bank_labels: Tensor,
+    *,
+    num_classes: int,
+    k: int = 20,
+    temperature: float = 0.07,
+    distance_metric: str = "cosine",
+    chunk_size: int = -1,
+) -> Tensor:
+    """Weighted k-NN soft predictions against a feature bank.
+
+    Each query is scored by its ``k`` nearest neighbours in ``bank_features``,
+    weighted by inverse (temperature-shifted) distance, and votes are pooled
+    per class. This is the core of :class:`OnlineKNN`, exposed as a standalone
+    function so other evaluators (e.g. the periodic segmentation callback) can
+    reuse it without the queue/hook machinery.
+
+    Args:
+        features: Query features of shape ``(B, D)`` (for dense use, patches are
+            just rows, so ``(B * N, D)``).
+        bank_features: Support features of shape ``(Q, D)``.
+        bank_labels: Support integer labels of shape ``(Q,)`` (or ``(Q, 1)``).
+        num_classes: Number of classes for the one-hot vote allocation.
+        k: Number of neighbours (clamped to the bank size).
+        temperature: Additive shift in the inverse-distance weighting.
+        distance_metric: One of ``"euclidean"``, ``"squared_euclidean"``,
+            ``"cosine"``, ``"manhattan"``.
+        chunk_size: Query chunk size for the distance computation (``-1`` = all
+            at once).
+
+    Returns:
+        Soft predictions of shape ``(B, num_classes)`` (un-normalised vote
+        weights); take ``argmax(dim=1)`` for hard labels.
+    """
+    if bank_features.device != features.device:
+        bank_features = bank_features.to(features.device)
+        bank_labels = bank_labels.to(features.device)
+    if bank_features.dtype != features.dtype:
+        bank_features = bank_features.float()
+        features = features.float()
+
+    k_actual = min(k, bank_features.size(0))
+    cs = features.size(0) if chunk_size == -1 else chunk_size
+    dist_matrix = compute_pairwise_distances_chunked(
+        bank_features, features, metric=distance_metric, chunk_size=cs
+    )
+
+    dist_weight, sim_indices = dist_matrix.topk(k=k_actual, dim=0, largest=False)
+    dist_weight = 1 / dist_weight.add_(temperature)
+
+    labels_1d = bank_labels.squeeze(-1) if bank_labels.dim() > 1 else bank_labels
+    selected_labels = labels_1d[sim_indices].long()
+    one_hot_labels = F.one_hot(selected_labels, num_classes=num_classes)
+    return (dist_weight.unsqueeze(-1) * one_hot_labels).sum(0)
+
+
 class OnlineKNN(Callback):
     """Weighted K-Nearest Neighbors online evaluator using queue discovery.
 
@@ -222,43 +281,17 @@ class OnlineKNN(Callback):
         current_targets: Optional[Tensor] = None,
     ) -> Optional[Tensor]:
         """Compute KNN predictions."""
-        batch_size = features.size(0)
         num_classes = self._resolve_num_classes(cached_labels, current_targets)
-
-        predictions = torch.zeros(
-            batch_size, num_classes, device=features.device, dtype=torch.float32
-        )
-
-        if cached_features.device != features.device:
-            cached_features = cached_features.to(features.device)
-            cached_labels = cached_labels.to(features.device)
-
-        k_actual = min(self.k, cached_features.size(0))
-
-        if cached_features.dtype != features.dtype:
-            cached_features = cached_features.float()
-            features = features.float()
-
-        chunk_size = batch_size if self.chunk_size == -1 else self.chunk_size
-        dist_matrix = compute_pairwise_distances_chunked(
-            cached_features,
+        return weighted_knn_predict(
             features,
-            metric=self.distance_metric,
-            chunk_size=chunk_size,
+            cached_features,
+            cached_labels,
+            num_classes=num_classes,
+            k=self.k,
+            temperature=self.temperature,
+            distance_metric=self.distance_metric,
+            chunk_size=self.chunk_size,
         )
-
-        dist_weight, sim_indices = dist_matrix.topk(k=k_actual, dim=0, largest=False)
-
-        dist_weight = 1 / dist_weight.add_(self.temperature)
-
-        labels_1d = (
-            cached_labels.squeeze(-1) if cached_labels.dim() > 1 else cached_labels
-        )
-        selected_labels = labels_1d[sim_indices].long()
-        one_hot_labels = F.one_hot(selected_labels, num_classes=num_classes)
-
-        predictions = (dist_weight.unsqueeze(-1) * one_hot_labels).sum(0)
-        return predictions
 
     def _resolve_num_classes(
         self,
