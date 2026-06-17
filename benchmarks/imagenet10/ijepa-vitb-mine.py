@@ -124,7 +124,7 @@ def main():
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
-            "peak_step": 300 / 600,
+            "peak_step": 40 / 300,
             "start_factor": 0.01,
             "end_lr": 6e-4 / 10,
             "total_steps": (len(data.train) // num_gpus) * max_epochs,
@@ -182,6 +182,10 @@ def main():
             entity=os.environ.get("WANDB_ENTITY"),
             project=os.environ.get("WANDB_PROJECT", "ijepa-mine"),
             name="ijepa-vitb-inet10",
+            # Keep wandb's run files out of the code dir. Lightning passes
+            # save_dir -> wandb.init(dir=...) explicitly, which overrides the
+            # WANDB_DIR env var, so read it here for WANDB_DIR to take effect.
+            save_dir=os.environ.get("WANDB_DIR", "."),
             log_model=False,
         ),
         precision="16-mixed",
