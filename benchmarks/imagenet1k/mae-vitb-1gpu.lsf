@@ -1,0 +1,68 @@
+#!/bin/bash
+#BSUB -J mae-vitb-inet1k-1gpu
+#BSUB -q gpu
+#BSUB -gpu "num=1:j_exclusive=yes:gmem=34G"
+#BSUB -n 16
+#BSUB -R "rusage[mem=6G]"
+#BSUB -R "span[hosts=1]"
+#BSUB -W 24:00
+#BSUB -o mae-vitb-inet1k-1gpu_%J.log
+#BSUB -e mae-vitb-inet1k-1gpu_%J.err
+# Single-GPU TEST run of ImageNet-1k MAE ViT-B/16 (gmae recipe) — for verifying
+# the run (and the inline ADE20k kNN seg monitor) without an 8-GPU allocation.
+#
+# The script auto-detects the GPU count: with one GPU it sets devices=1 and
+# strategy="auto" (no DDP), and the MAE LR auto-scales from the effective batch
+# (BATCH_SIZE * 1 gpu * ACCUM). PeriodicSegmentationEval runs on rank 0, so a
+# single GPU exercises the identical code path.
+#
+# NOTE: validation — and thus the seg-eval trigger (on_validation_epoch_end) —
+# only fires after the first FULL ImageNet-1k train epoch (~hours on 1 GPU).
+# There is no batch-limit knob, so the fastest meaningful test is MAX_EPOCHS=1.
+#
+# Launch (short test):  MAX_EPOCHS=1 bsub < benchmarks/imagenet1k/mae-vitb-1gpu.lsf
+#   (add BATCH_SIZE=128 if 34G gmem is tight for ViT-B at 256)
+# No seg eval:          SEG_EVAL=0 bsub < benchmarks/imagenet1k/mae-vitb-1gpu.lsf
+
+set -uo pipefail
+
+# --- repo + environment ------------------------------------------------------
+REPO=/dkfz/cluster/gpu/data/OE0441/t006d/Code/g-stable-pretraining
+cd "$REPO"
+source /home/t006d/stablepretrainingrc     # puts the right python on PATH
+
+# --- offline + identity (compute nodes have no internet) ---------------------
+export WANDB_MODE=offline
+export WANDB_ENTITY=tawald
+export WANDB_PROJECT=imagenet1k-mae-ijepa
+export WANDB_DIR=/dkfz/cluster/gpu/checkpoints/OE0441/t006d      # wandb appends /wandb
+export WANDB_CONSOLE=off
+export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# ImageNet-1k Arrow cache (must match the value used in prepare_imagenet1k.py):
+export STABLE_PRETRAINING_DATA_DIR=/dkfz/cluster/gpu/data/OE0441/t006d/Natural_Datasets
+# HF hub cache (models + the ADE20k `scene_parse_150` snapshot used by SEG_EVAL):
+export HF_HOME=/dkfz/cluster/gpu/data/OE0441/t006d/Natural_Datasets/.hf
+export CHECKPOINT_DIR=/dkfz/cluster/gpu/checkpoints/OE0441/t006d/checkpoints
+export SPT_CACHE_DIR=/dkfz/cluster/gpu/checkpoints/OE0441/t006d/spt-cache
+export TMPDIR=/dkfz/cluster/gpu/checkpoints/OE0441/t006d/tmp
+mkdir -p "$SPT_CACHE_DIR" "$TMPDIR" "$HF_HOME"
+
+# --- MAE recipe knobs (defaults live in the .py) -----------------------------
+# Single GPU: effective batch = BATCH_SIZE * 1 gpu * ACCUM. LR auto-scales from
+# the MAE reference (256). Defaults: BATCH_SIZE=256 ACCUM=2 -> 512.
+# export BATCH_SIZE=256
+# export ACCUM=2
+export MAX_EPOCHS="${MAX_EPOCHS:-1}"   # test default: one full epoch (override as needed)
+
+# --- inline ADE20k kNN-segmentation monitor (PeriodicSegmentationEval) --------
+# Requires the `scene_parse_150` dataset cached under $HF_HOME (offline node).
+# Set SEG_EVAL=0 to disable, or tune cadence/cost:
+export SEG_EVAL="${SEG_EVAL:-1}"
+export SEG_EVAL_EVERY="${SEG_EVAL_EVERY:-25}"     # epochs between triggers (epoch 0 always fires)
+export SEG_EVAL_SUPPORT="${SEG_EVAL_SUPPORT:-2048}"  # support-image budget
+# export SEG_EVAL_LINEAR=1                          # also train a linear seg head
+
+echo "HOST=$(hostname)"; nvidia-smi -L
+
+# --- launch (single GPU; devices=1, strategy="auto") -------------------------
+python benchmarks/imagenet1k/mae-vit-base.py
