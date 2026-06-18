@@ -96,7 +96,7 @@ def build_ade20k_datamodule(
 
     def _loader(split, shuffle):
         ds = spt.data.HFDataset(
-            "scene_parse_150",
+            "zhoubolei/scene_parse_150",
             split=split,
             cache_dir=cache_dir,
             trust_remote_code=True,
