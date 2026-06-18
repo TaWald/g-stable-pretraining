@@ -263,7 +263,7 @@ def build_linear_segmentation_callback(
 
 def _ade20k_loader(split, shuffle, batch_size, num_workers, cache_dir, image_size, subset_n=None):
     ds = spt.data.HFDataset(
-        "scene_parse_150",
+        "zhoubolei/scene_parse_150",
         split=split,
         cache_dir=cache_dir,
         trust_remote_code=True,
