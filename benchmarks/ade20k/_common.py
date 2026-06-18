@@ -26,6 +26,11 @@ from torchvision.transforms.functional import InterpolationMode
 import stable_pretraining as spt
 from stable_pretraining.data import transforms
 
+# ``get_data_dir`` (benchmarks/utils.py) resolves the shared dataset root; used to
+# locate the local ADE20k parquet written by ``prepare_ade20k.py``.
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from utils import get_data_dir  # noqa: E402
+
 # ADE20k: 150 semantic classes + label 0 = unlabeled/ignore -> 151 indices.
 ADE20K_NUM_CLASSES = 151
 ADE20K_IGNORE_INDEX = 0
@@ -86,6 +91,19 @@ def _build_transform(image_size: int):
     )
 
 
+def _ade20k_data_files(split, cache_dir=None):
+    """Local ``scene_parsing`` parquet for ``split`` (written by prepare_ade20k.py).
+
+    Resolves ``<root>/scene_parsing/<split>/*.parquet`` where ``root`` defaults to
+    ``get_data_dir("scene_parse_150")`` (i.e. ``$STABLE_PRETRAINING_DATA_DIR/
+    scene_parse_150``); pass ``cache_dir`` to point at a different dataset root.
+    Loading the local files via the ``"parquet"`` builder needs no Hub access, so
+    it works under ``HF_DATASETS_OFFLINE=1`` on compute nodes.
+    """
+    root = Path(cache_dir) if cache_dir else Path(get_data_dir("scene_parse_150"))
+    return {split: str(root / "scene_parsing" / split / "*.parquet")}
+
+
 def build_ade20k_datamodule(
     image_size: int = 224,
     batch_size: int = 32,
@@ -96,10 +114,9 @@ def build_ade20k_datamodule(
 
     def _loader(split, shuffle):
         ds = spt.data.HFDataset(
-            "zhoubolei/scene_parse_150",
+            "parquet",
+            data_files=_ade20k_data_files(split, cache_dir),
             split=split,
-            cache_dir=cache_dir,
-            trust_remote_code=True,
             rename_columns={"annotation": "mask"},
             transform=_build_transform(image_size),
         )
@@ -263,10 +280,9 @@ def build_linear_segmentation_callback(
 
 def _ade20k_loader(split, shuffle, batch_size, num_workers, cache_dir, image_size, subset_n=None):
     ds = spt.data.HFDataset(
-        "zhoubolei/scene_parse_150",
+        "parquet",
+        data_files=_ade20k_data_files(split, cache_dir),
         split=split,
-        cache_dir=cache_dir,
-        trust_remote_code=True,
         rename_columns={"annotation": "mask"},
         transform=_build_transform(image_size),
     )

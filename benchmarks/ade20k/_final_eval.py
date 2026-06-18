@@ -29,6 +29,7 @@ from stable_pretraining.callbacks.knn_segmentation import upsample_logits_to
 from _common import (  # noqa: E402
     ADE20K_IGNORE_INDEX,
     ADE20K_NUM_CLASSES,
+    _ade20k_data_files,
     _ade20k_seg_metrics,
     _build_transform,
 )
@@ -97,10 +98,9 @@ def build_final_ade20k_loaders(
 
     def _loader(split, transform, shuffle):
         ds = spt.data.HFDataset(
-            "zhoubolei/scene_parse_150",
+            "parquet",
+            data_files=_ade20k_data_files(split, data_cache),
             split=split,
-            cache_dir=data_cache,
-            trust_remote_code=True,
             rename_columns={"annotation": "mask"},
             transform=transform,
         )
